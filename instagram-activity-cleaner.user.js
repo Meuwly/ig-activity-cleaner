@@ -2,9 +2,9 @@
 // @name         Instagram Activity Cleaner
 // @name:fr      Instagram Activity Cleaner
 // @namespace    ig-cleaner
-// @version      3.0
-// @description  Automatically unlike all your posts & reels and delete all your comments from the "Your activity" page.
-// @description:fr Retire automatiquement tous tes J'aime et supprime tous tes commentaires depuis la page « Votre activité ».
+// @version      4.0
+// @description  Unlike all posts & reels, delete all your comments, unsend your DMs and delete chats on your side.
+// @description:fr Retire tes J'aime, supprime tes commentaires, annule l'envoi de tes messages privés et supprime des discussions de ton côté.
 // @author       Timothée Meuwly
 // @match        https://www.instagram.com/*
 // @grant        none
@@ -14,46 +14,96 @@
 (function () {
   'use strict';
 
-  // ---------- Réglages ----------
-  // Les deux modes : un par page "Votre activité"
+  // =====================================================================
+  // SÉCURITÉ : le script ne clique JAMAIS sur un élément qui contient
+  // un de ces mots. S'il en croise un, il s'arrête immédiatement.
+  // =====================================================================
+  const FORBIDDEN_WORDS = [
+    'signaler', 'signalement', 'report',
+    'bloquer', 'block',
+    'restreindre', 'restrict',
+  ];
+
+  // ---------- Modes ----------
+  // group "activity" : pages « Votre activité » (un onglet = une page)
+  // group "dm"       : une discussion privée ouverte (onglets sur la même page)
   const MODES = {
     likes: {
+      group: 'activity',
       path: '/your_activity/interactions/likes',
       key: 'igcleaner',
       icon: '♥',
       actionLabels: ["Je n'aime plus", 'Unlike'],
+      reloadWhenEmpty: true,
       texts: {
-        fr: { title: "Retirer les J'aime", count: "J'aime retirés", done: 'retirés', tab: "J'aime" },
-        en: { title: 'Unlike everything', count: 'likes removed', done: 'removed', tab: 'Likes' },
+        fr: { title: "Retirer les J'aime", count: "J'aime retirés", done: 'retirés', tab: "♥ J'aime",
+          hint: "Retire tous tes J'aime sur les posts et les réels." },
+        en: { title: 'Unlike everything', count: 'likes removed', done: 'removed', tab: '♥ Likes',
+          hint: 'Removes all your likes on posts and reels.' },
       },
     },
     comments: {
+      group: 'activity',
       path: '/your_activity/interactions/comments',
       key: 'igcleaner_comments',
       icon: '💬',
       actionLabels: ['Supprimer', 'Delete'],
+      reloadWhenEmpty: true,
       texts: {
-        fr: { title: 'Supprimer les commentaires', count: 'commentaires supprimés', done: 'supprimés', tab: 'Commentaires' },
-        en: { title: 'Delete comments', count: 'comments deleted', done: 'deleted', tab: 'Comments' },
+        fr: { title: 'Supprimer les commentaires', count: 'commentaires supprimés', done: 'supprimés', tab: '💬 Commentaires',
+          hint: 'Supprime tous les commentaires que tu as écrits.' },
+        en: { title: 'Delete comments', count: 'comments deleted', done: 'deleted', tab: '💬 Comments',
+          hint: 'Deletes every comment you wrote.' },
+      },
+    },
+    unsend: {
+      group: 'dm',
+      key: 'igcleaner_unsend',
+      icon: '↩',
+      reloadWhenEmpty: false,
+      texts: {
+        fr: { title: "Annuler l'envoi", count: 'messages retirés', done: 'retirés', tab: '↩ Mes messages',
+          hint: "Retire TES messages de cette discussion, pour toi ET pour l'autre personne. Ne touche jamais à « Signaler »." },
+        en: { title: 'Unsend my messages', count: 'messages unsent', done: 'unsent', tab: '↩ Unsend',
+          hint: 'Unsends YOUR messages in this chat, for you AND the other person. Never touches "Report".' },
+      },
+    },
+    deleteChat: {
+      group: 'dm',
+      key: 'igcleaner_deletechat',
+      icon: '🗑',
+      reloadWhenEmpty: false,
+      danger: true,
+      texts: {
+        fr: { title: 'Supprimer la discussion', count: 'discussion supprimée', done: 'supprimée', tab: '🗑 Discussion',
+          hint: "Efface toute la discussion (aussi les messages de l'autre) de TON côté seulement. L'autre personne garde tout. Instagram ne permet pas d'effacer ses messages chez lui." },
+        en: { title: 'Delete chat (for me)', count: 'chat deleted', done: 'deleted', tab: '🗑 Delete chat',
+          hint: "Deletes the whole chat (their messages too) on YOUR side only. The other person keeps everything. Instagram can't delete their messages on their side." },
       },
     },
   };
 
+  // Textes d'Instagram que le script cherche (FR + EN)
+  const LABELS = {
+    select: ['Sélectionner', 'Select'],
+    dmMore: ['More', 'Plus', "Plus d'options", 'More options', 'See more options', "Voir plus d'options", 'Autres options'],
+    unsend: ["Annuler l'envoi", 'Unsend', 'Retirer'],
+    chatInfo: [
+      'Conversation information', 'Conversation info', 'Informations sur la conversation',
+      'Infos sur la conversation', 'Informations de la conversation', 'Détails de la conversation',
+    ],
+    deleteChat: ['Supprimer la discussion', 'Supprimer la conversation', 'Delete chat', 'Delete conversation'],
+    deleteConfirm: ['Supprimer', 'Delete'],
+  };
+
   const CONFIG = {
-    batchSize: 20, // éléments sélectionnés par lot
+    batchSize: 20, // éléments par lot
     pauseBetweenBatches: [8000, 15000], // pause aléatoire (ms) entre deux lots
-    selectLabels: ['Sélectionner', 'Select'],
+    pauseBetweenMessages: [1500, 3000], // pause (ms) entre deux messages retirés
   };
   const DEFAULT_PAUSE = CONFIG.pauseBetweenBatches;
   const LANG_KEY = 'igcleaner_lang';
-
-  // Mode de la page actuelle (ou null si on n'est pas sur une page gérée)
-  const detectMode = () =>
-    Object.keys(MODES).find((m) => location.pathname.startsWith(MODES[m].path)) || null;
-
-  let mode = detectMode();
-  const M = () => MODES[mode];
-  const storageKey = (name) => M().key + '_' + name;
+  const DM_MODE_KEY = 'igcleaner_dm_mode';
 
   // ---------- Langues ----------
   const I18N = {
@@ -62,9 +112,15 @@
       running: 'En cours…',
       batchDone: '{n} {done} · pause avant le prochain lot…',
       searching: "Recherche d'autres éléments…",
+      loadingOlder: 'Chargement des anciens messages…',
       reloading: 'Rechargement de la page…',
       resuming: 'Reprise dans 4 secondes…',
       stopped: 'Arrêté',
+      finished: 'Terminé ✔',
+      chatDeleted: 'Discussion supprimée de ton côté ✔',
+      chatFailed: 'Impossible de supprimer la discussion. Regarde la console (F12).',
+      safetyStop: 'Arrêt de sécurité : bouton interdit détecté. Rien n\'a été cliqué.',
+      confirmDeleteChat: 'Supprimer toute cette discussion de ton côté ?\n\nL\'autre personne gardera tous les messages. Ça ne peut pas être annulé.',
       pauseSet: 'Pause réglée : {a} à {b} s',
       pauseLabel: 'Pause entre deux lots',
       to: 'à',
@@ -82,9 +138,15 @@
       running: 'Running…',
       batchDone: '{n} {done} · pausing before next batch…',
       searching: 'Looking for more items…',
+      loadingOlder: 'Loading older messages…',
       reloading: 'Reloading the page…',
       resuming: 'Resuming in 4 seconds…',
       stopped: 'Stopped',
+      finished: 'Done ✔',
+      chatDeleted: 'Chat deleted on your side ✔',
+      chatFailed: 'Could not delete the chat. Check the console (F12).',
+      safetyStop: 'Safety stop: forbidden button detected. Nothing was clicked.',
+      confirmDeleteChat: 'Delete this whole chat on your side?\n\nThe other person will keep all messages. This cannot be undone.',
       pauseSet: 'Pause set: {a} to {b} s',
       pauseLabel: 'Pause between batches',
       to: 'to',
@@ -108,6 +170,19 @@
   let lang = store.get(localStorage, LANG_KEY)
     || ((navigator.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en');
   if (!I18N[lang]) lang = 'en';
+
+  // Mode de la page actuelle (ou null si la page n'est pas gérée)
+  function detectMode() {
+    if (location.pathname.startsWith('/direct/t/')) {
+      const saved = store.get(localStorage, DM_MODE_KEY);
+      return MODES[saved] && MODES[saved].group === 'dm' ? saved : 'unsend';
+    }
+    return Object.keys(MODES).find((m) => MODES[m].path && location.pathname.startsWith(MODES[m].path)) || null;
+  }
+
+  let mode = detectMode();
+  const M = () => MODES[mode];
+  const storageKey = (name) => M().key + '_' + name;
 
   function t(key, params = {}) {
     const all = { ...I18N[lang], ...(mode ? M().texts[lang] : {}), ...params };
@@ -149,23 +224,28 @@
   const isDisabled = (el) =>
     el.disabled || el.getAttribute('aria-disabled') === 'true';
 
-  function findByText(labels, root = document) {
-    const wanted = labels.map(norm);
-    const nodes = root.querySelectorAll('button, [role="button"], [aria-label], span, div');
-    let found = null;
-    for (const n of nodes) {
-      const txt = norm(n.textContent);
-      const aria = norm(n.getAttribute('aria-label'));
-      if ((wanted.includes(txt) || wanted.includes(aria)) && isVisible(n)) {
-        // On garde le dernier trouvé : la barre du bas / la fenêtre est en fin de page
-        found = n.closest('button, [role="button"]') || n;
-      }
-    }
-    return found;
+  // Tous les textes d'un élément : texte visible + aria-label (lui et ses enfants)
+  function allTextOf(el) {
+    const parts = [el.textContent, el.getAttribute('aria-label'), el.getAttribute('title')];
+    el.querySelectorAll('[aria-label], [title]').forEach((c) => {
+      parts.push(c.getAttribute('aria-label'), c.getAttribute('title'));
+    });
+    return norm(parts.filter(Boolean).join(' '));
   }
 
-  // Clic "complet" (certains boutons React ignorent un simple .click())
+  const hasForbiddenWord = (el) => {
+    const txt = allTextOf(el);
+    return FORBIDDEN_WORDS.some((w) => txt.includes(w));
+  };
+
+  class SafetyStop extends Error {}
+
+  // Clic "complet" + contrôle de sécurité AVANT chaque clic
   function realClick(el) {
+    if (!el || hasForbiddenWord(el)) {
+      log('⛔ SAFETY STOP — refused to click:', el, el && allTextOf(el));
+      throw new SafetyStop('forbidden');
+    }
     const opts = { bubbles: true, cancelable: true, view: window };
     el.dispatchEvent(new PointerEvent('pointerdown', opts));
     el.dispatchEvent(new MouseEvent('mousedown', opts));
@@ -174,11 +254,73 @@
     el.click();
   }
 
+  // Survol (ne clique jamais) : fait apparaître les boutons d'un message
+  function hover(el) {
+    const targets = [el, ...el.querySelectorAll('div')].slice(0, 40);
+    for (const n of targets) {
+      const opts = { bubbles: true, cancelable: true, view: window, relatedTarget: document.body };
+      n.dispatchEvent(new PointerEvent('pointerover', opts));
+      n.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
+      n.dispatchEvent(new MouseEvent('mouseover', opts));
+      n.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
+      n.dispatchEvent(new MouseEvent('mousemove', opts));
+    }
+  }
+
+  function pressEscape() {
+    const opts = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true };
+    (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', opts));
+    document.dispatchEvent(new KeyboardEvent('keydown', opts));
+  }
+
+  // Cherche un élément dont le texte OU l'aria-label est EXACTEMENT un des libellés.
+  // Renvoie l'élément cliquable le plus proche, sauf s'il contient un mot interdit :
+  // dans ce cas on garde l'élément exact (jamais un conteneur plus large).
+  function findByText(labels, root = document, { last = true, ariaOnly = false } = {}) {
+    const wanted = labels.map(norm);
+    const nodes = root.querySelectorAll('button, [role="button"], [role="menuitem"], [aria-label], span, div');
+    let found = null;
+    for (const n of nodes) {
+      const txt = norm(n.textContent);
+      const aria = norm(n.getAttribute('aria-label'));
+      const match = wanted.includes(aria) || (!ariaOnly && wanted.includes(txt));
+      if (match && isVisible(n)) {
+        const clickable = n.closest('button, [role="button"], [role="menuitem"], a');
+        let target = n;
+        if (clickable && root.contains(clickable) && !hasForbiddenWord(clickable)) {
+          const ctext = norm(clickable.textContent);
+          if (!ctext || wanted.includes(ctext)) target = clickable;
+        }
+        if (!last) return target;
+        found = target;
+      }
+    }
+    return found;
+  }
+
   function lastDialog() {
     const d = [...document.querySelectorAll('div[role="dialog"]')].filter(isVisible);
     return d[d.length - 1] || null;
   }
 
+  function openMenu() {
+    const menus = [...document.querySelectorAll('[role="menu"], div[role="dialog"]')].filter(isVisible);
+    return menus[menus.length - 1] || null;
+  }
+
+  async function waitFor(fn, timeout = 10000) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const r = fn();
+      if (r && (!Array.isArray(r) || r.length)) return r;
+      await sleep(250);
+    }
+    return null;
+  }
+
+  // =====================================================================
+  // MODE « Votre activité » : J'aime / commentaires
+  // =====================================================================
   function getCheckboxes() {
     const sel = [
       '[data-testid="bulk_action_checkbox"]',
@@ -188,21 +330,10 @@
     return [...document.querySelectorAll(sel)].filter((e) => e.offsetParent !== null);
   }
 
-  async function waitFor(fn, timeout = 10000) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-      const r = fn();
-      if (r && (!Array.isArray(r) || r.length)) return r;
-      await sleep(300);
-    }
-    return null;
-  }
-
-  // ---------- Un lot ----------
-  async function runBatch() {
+  async function activityBatch() {
     // 1. Mode sélection
     if (!getCheckboxes().length) {
-      const selectBtn = await waitFor(() => findByText(CONFIG.selectLabels));
+      const selectBtn = await waitFor(() => findByText(LABELS.select));
       if (!selectBtn) return 0;
       realClick(selectBtn);
     }
@@ -257,30 +388,176 @@
     return count;
   }
 
-  async function loop() {
-    let empty = 0;
-    while (running) {
-      const n = await runBatch();
-      if (n > 0) {
-        total += n;
-        empty = 0;
-        setStatus('batchDone', 'wait', { n });
-        await sleep(rand(CONFIG.pauseBetweenBatches));
-      } else {
-        empty++;
-        if (empty >= 3) {
-          // On recharge la page pour voir s'il en reste
-          setStatus('reloading', 'wait');
-          store.set(sessionStorage, storageKey('autostart'), '1');
-          location.reload();
-          return;
-        }
-        setStatus('searching', 'run');
-        window.scrollTo(0, document.body.scrollHeight);
-        await sleep(3000);
+  // =====================================================================
+  // MODE « Annuler l'envoi » : retire MES messages d'une discussion
+  // Clics autorisés : bouton « Plus » d'un message, « Annuler l'envoi »,
+  // et la confirmation « Annuler l'envoi ». RIEN d'autre.
+  // =====================================================================
+  const DONE_ATTR = 'data-igc-done';
+
+  function getMessageRows() {
+    return [...document.querySelectorAll('div[role="row"]')]
+      .filter((r) => isVisible(r) && !r.hasAttribute(DONE_ATTR));
+  }
+
+  function scrollableParent(el) {
+    for (let n = el && el.parentElement; n; n = n.parentElement) {
+      const oy = getComputedStyle(n).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+    }
+    return null;
+  }
+
+  async function unsendOne(row) {
+    row.setAttribute(DONE_ATTR, '1');
+    row.scrollIntoView({ block: 'center' });
+    await sleep(200);
+    hover(row);
+
+    // 1. Bouton « Plus » qui apparaît au survol du message
+    const more = await waitFor(() => findByText(LABELS.dmMore, row, { last: false, ariaOnly: true }), 1500);
+    if (!more) return false;
+    realClick(more);
+
+    // 2. Le menu doit contenir « Annuler l'envoi » (= c'est MON message)
+    const menu = await waitFor(openMenu, 2000);
+    const unsendItem = menu && await waitFor(() => findByText(LABELS.unsend, menu, { last: false }), 1500);
+    if (!unsendItem) {
+      // Message de l'autre personne (ou menu inconnu) : on referme SANS cliquer
+      pressEscape();
+      await sleep(400);
+      return false;
+    }
+    log('Unsending message', row);
+    realClick(unsendItem);
+
+    // 3. Confirmation « Annuler l'envoi »
+    const dialog = await waitFor(() => {
+      const d = lastDialog();
+      return d && findByText(LABELS.unsend, d) ? d : null;
+    }, 4000);
+    if (dialog) {
+      const confirm = findByText(LABELS.unsend, dialog);
+      if (confirm && confirm !== unsendItem) {
+        realClick(confirm);
+        await waitFor(() => (!document.body.contains(dialog) || !isVisible(dialog) ? true : null), 8000);
       }
     }
-    setStatus('stopped', 'idle');
+    await sleep(rand(CONFIG.pauseBetweenMessages));
+    return true;
+  }
+
+  async function unsendBatch() {
+    let count = 0;
+    let rows = getMessageRows();
+    if (!rows.length) {
+      // Plus rien à l'écran : on remonte pour charger les anciens messages
+      setStatus('loadingOlder', 'run');
+      const all = document.querySelectorAll('div[role="row"]');
+      const scroller = scrollableParent(all[0]);
+      if (scroller) scroller.scrollTop = 0;
+      await sleep(2500);
+      return 0;
+    }
+    // Du plus récent (en bas) au plus ancien (en haut)
+    rows = rows.reverse();
+    for (const row of rows) {
+      if (!running || count >= CONFIG.batchSize) break;
+      if (!document.body.contains(row)) continue;
+      if (await unsendOne(row)) {
+        count++;
+        total++;
+        setStatus('running', 'run');
+      }
+    }
+    total -= count; // la boucle principale additionne le lot
+    return count;
+  }
+
+  // =====================================================================
+  // MODE « Supprimer la discussion » (de MON côté seulement)
+  // Clics autorisés : « Informations sur la conversation »,
+  // « Supprimer la discussion », puis « Supprimer ». RIEN d'autre.
+  // =====================================================================
+  async function deleteChatOnce() {
+    const info = await waitFor(() => findByText(LABELS.chatInfo, document, { last: false }), 5000);
+    if (!info) {
+      log('Chat info button not found. Labels:', LABELS.chatInfo);
+      return -1;
+    }
+    realClick(info);
+
+    const del = await waitFor(() => findByText(LABELS.deleteChat), 5000);
+    if (!del) {
+      log('"Delete chat" button not found. Labels:', LABELS.deleteChat);
+      return -1;
+    }
+    realClick(del);
+
+    const confirm = await waitFor(() => {
+      const d = lastDialog();
+      const b = d && findByText(LABELS.deleteConfirm, d);
+      return b && b !== del ? b : null;
+    }, 5000);
+    if (!confirm) {
+      log('Delete confirmation not found.');
+      return -1;
+    }
+    realClick(confirm);
+    await sleep(2000);
+    return 1;
+  }
+
+  // =====================================================================
+  // Boucle principale
+  // =====================================================================
+  async function loop() {
+    let empty = 0;
+    try {
+      if (mode === 'deleteChat') {
+        const r = await deleteChatOnce();
+        if (r > 0) total += r;
+        stopRunning(r > 0 ? 'chatDeleted' : 'chatFailed', r > 0 ? 'idle' : 'err');
+        return;
+      }
+
+      while (running) {
+        const n = mode === 'unsend' ? await unsendBatch() : await activityBatch();
+        if (n > 0) {
+          total += n;
+          empty = 0;
+          setStatus('batchDone', 'wait', { n });
+          await sleep(rand(CONFIG.pauseBetweenBatches));
+        } else {
+          empty++;
+          if (M().reloadWhenEmpty && empty >= 3) {
+            // On recharge la page pour voir s'il en reste
+            setStatus('reloading', 'wait');
+            store.set(sessionStorage, storageKey('autostart'), '1');
+            location.reload();
+            return;
+          }
+          if (!M().reloadWhenEmpty && empty >= 6) {
+            stopRunning('finished', 'idle');
+            return;
+          }
+          if (mode !== 'unsend') {
+            setStatus('searching', 'run');
+            window.scrollTo(0, document.body.scrollHeight);
+            await sleep(3000);
+          }
+        }
+      }
+      setStatus('stopped', 'idle');
+    } catch (e) {
+      if (e instanceof SafetyStop) {
+        pressEscape();
+        stopRunning('safetyStop', 'err');
+      } else {
+        log('Unexpected error', e);
+        stopRunning('stopped', 'err');
+      }
+    }
   }
 
   // ---------- Menu ----------
@@ -288,7 +565,7 @@
     :host { all: initial; }
     * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
     .card {
-      position: fixed; bottom: 24px; right: 24px; z-index: 2147483647; width: 280px;
+      position: fixed; bottom: 24px; right: 24px; z-index: 2147483647; width: 300px;
       background: rgba(18, 18, 22, 0.92); color: #f5f5f5;
       border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 18px; overflow: hidden;
       box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
@@ -300,6 +577,7 @@
       display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: move; user-select: none;
       background: linear-gradient(120deg, #feda75, #fa7e1e 25%, #d62976 50%, #962fbf 75%, #4f5bd5);
     }
+    .card.danger .head { background: linear-gradient(120deg, #f87171, #dc2626 60%, #991b1b); }
     .logo {
       width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; flex: none;
       background: rgba(255, 255, 255, 0.22); font-size: 15px;
@@ -318,9 +596,16 @@
       border: 0; background: transparent; color: #a8a8b3; font-size: 12px; font-weight: 700;
       padding: 7px 6px; border-radius: 9px; cursor: pointer;
     }
+    .tabs button[hidden] { display: none; }
     .tabs button:hover:not(:disabled) { color: #fff; }
     .tabs button.on { background: rgba(255, 255, 255, 0.14); color: #fff; }
+    .tabs button.on.danger { background: rgba(220, 38, 38, 0.35); }
     .tabs button:disabled:not(.on) { opacity: .4; cursor: not-allowed; }
+    .hint {
+      font-size: 12px; line-height: 1.45; color: #d4d4dc; padding: 9px 11px; border-radius: 10px;
+      background: rgba(255, 255, 255, 0.05); border-left: 3px solid #962fbf;
+    }
+    .card.danger .hint { border-left-color: #dc2626; background: rgba(220, 38, 38, 0.1); }
     .counter { text-align: center; }
     .count { font-size: 38px; font-weight: 800; line-height: 1; }
     .count-label { font-size: 12px; color: #a8a8b3; margin-top: 4px; }
@@ -331,8 +616,10 @@
     .dot { width: 9px; height: 9px; border-radius: 50%; background: #71717a; flex: none; }
     .dot.run { background: #22c55e; animation: pulse 1.2s infinite; }
     .dot.wait { background: #f59e0b; }
+    .dot.err { background: #ef4444; }
     @keyframes pulse { 50% { box-shadow: 0 0 0 5px rgba(34, 197, 94, .25); } }
     .label { font-size: 12px; color: #a8a8b3; margin-bottom: 6px; }
+    .pause-box.hidden { display: none; }
     .pause { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #d4d4dc; }
     .pause input {
       width: 64px; padding: 7px 8px; border-radius: 9px; color: #fff; font-size: 13px; text-align: center;
@@ -344,9 +631,10 @@
       font-size: 14px; font-weight: 700; color: #fff; transition: transform .1s, filter .2s;
       background: linear-gradient(90deg, #fa7e1e, #d62976, #962fbf);
     }
+    .card.danger .main-btn { background: linear-gradient(90deg, #ef4444, #b91c1c); }
     .main-btn:hover { filter: brightness(1.1); }
     .main-btn:active { transform: scale(.98); }
-    .main-btn.stop { background: #3f3f46; }
+    .card .main-btn.stop { background: #3f3f46; }
     .row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #a8a8b3; }
     .lang { display: flex; background: rgba(255, 255, 255, 0.07); border-radius: 9px; padding: 3px; gap: 3px; }
     .lang button {
@@ -374,7 +662,7 @@
   // Met tous les textes du menu dans la langue choisie
   function applyLang() {
     ui.tabs.forEach((b) => {
-      b.lastChild.textContent = ' ' + MODES[b.dataset.mode].texts[lang].tab;
+      b.textContent = MODES[b.dataset.mode].texts[lang].tab;
     });
     ui.root.querySelectorAll('[data-i18n]').forEach((el) => {
       el.textContent = t(el.dataset.i18n);
@@ -414,6 +702,7 @@
   function buildPanel() {
     const host = document.createElement('div');
     const root = host.attachShadow({ mode: 'open' });
+
     root.innerHTML = `
       <style>${CSS}</style>
       <div class="card">
@@ -424,15 +713,18 @@
         </div>
         <div class="body">
           <div class="tabs">
-            <button data-mode="likes">♥<span></span></button>
-            <button data-mode="comments">💬<span></span></button>
+            <button data-mode="likes"></button>
+            <button data-mode="comments"></button>
+            <button data-mode="unsend"></button>
+            <button data-mode="deleteChat" class="danger"></button>
           </div>
+          <div class="hint" data-i18n="hint"></div>
           <div class="counter">
             <div class="count" id="count">0</div>
             <div class="count-label" data-i18n="count"></div>
           </div>
           <div class="status"><span class="dot" id="dot"></span><span id="status"></span></div>
-          <div>
+          <div class="pause-box" id="pause-box">
             <div class="label" data-i18n="pauseLabel"></div>
             <div class="pause">
               <input id="min" type="number" min="1">
@@ -470,14 +762,22 @@
       logo: $('logo'),
       min: $('min'),
       max: $('max'),
+      pauseBox: $('pause-box'),
       tabs: [...root.querySelectorAll('.tabs button')],
     };
 
-    // Onglets : on recharge la page de l'autre mode
     ui.tabs.forEach((b) => {
       b.onclick = () => {
-        if (running || b.dataset.mode === mode) return;
-        location.href = MODES[b.dataset.mode].path + '/';
+        const target = b.dataset.mode;
+        if (running || target === mode) return;
+        if (MODES[target].group === 'activity') {
+          // Autre page « Votre activité » : on y va
+          location.href = MODES[target].path + '/';
+        } else {
+          // Onglets des messages privés : même page
+          store.set(localStorage, DM_MODE_KEY, target);
+          refreshMode();
+        }
       };
     });
 
@@ -497,32 +797,34 @@
       };
     });
 
-    const minEl = $('min');
-    const maxEl = $('max');
     const savePause = () => {
-      let a = Math.max(1, Number(minEl.value) || 1);
-      let b = Math.max(1, Number(maxEl.value) || a);
+      let a = Math.max(1, Number(ui.min.value) || 1);
+      let b = Math.max(1, Number(ui.max.value) || a);
       if (b < a) [a, b] = [b, a];
-      minEl.value = a;
-      maxEl.value = b;
+      ui.min.value = a;
+      ui.max.value = b;
       CONFIG.pauseBetweenBatches = [a * 1000, b * 1000];
       store.set(localStorage, storageKey('pause'), JSON.stringify([a, b]));
       setStatus('pauseSet', running ? 'run' : 'idle', { a, b });
     };
-    minEl.onchange = savePause;
-    maxEl.onchange = savePause;
+    ui.min.onchange = savePause;
+    ui.max.onchange = savePause;
   }
 
   // Affiche le menu pour le mode de la page (ou le cache)
   function refreshMode() {
-    const newMode = detectMode();
-    if (newMode !== mode && running) {
-      // On a quitté la page pendant le nettoyage : on arrête
-      toggle();
-    }
-    mode = newMode;
+    if (running) stopRunning('stopped', 'idle');
+    mode = detectMode();
     ui.card.classList.toggle('hidden', !mode);
     if (!mode) return;
+
+    const group = M().group;
+    ui.tabs.forEach((b) => {
+      b.hidden = MODES[b.dataset.mode].group !== group;
+      b.classList.toggle('on', b.dataset.mode === mode);
+    });
+    ui.card.classList.toggle('danger', !!M().danger);
+    ui.pauseBox.classList.toggle('hidden', mode === 'deleteChat');
 
     loadPause();
     const [pMin, pMax] = CONFIG.pauseBetweenBatches.map((ms) => Math.round(ms / 1000));
@@ -530,22 +832,33 @@
     ui.max.value = pMax;
     total = Number(store.get(sessionStorage, storageKey('total'))) || 0;
     ui.logo.textContent = M().icon;
-    ui.tabs.forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
     lastStatus = { key: 'ready', state: 'idle', params: {} };
     applyLang();
   }
 
-  function toggle() {
-    running = !running;
+  function setRunningUI() {
     ui.btn.textContent = t(running ? 'stop' : 'start');
     ui.btn.classList.toggle('stop', running);
     ui.tabs.forEach((b) => { b.disabled = running; });
+  }
+
+  function stopRunning(statusKey, state) {
+    running = false;
+    if (mode) store.del(sessionStorage, storageKey('autostart'));
+    setRunningUI();
+    setStatus(statusKey, state);
+  }
+
+  function toggle() {
     if (running) {
-      setStatus('running', 'run');
-      loop();
-    } else {
-      if (mode) store.del(sessionStorage, storageKey('autostart'));
+      stopRunning('stopped', 'idle');
+      return;
     }
+    if (mode === 'deleteChat' && !window.confirm(t('confirmDeleteChat'))) return;
+    running = true;
+    setRunningUI();
+    setStatus('running', 'run');
+    loop();
   }
 
   buildPanel();
@@ -560,7 +873,7 @@
     }
   }, 1000);
 
-  if (mode && store.get(sessionStorage, storageKey('autostart')) === '1') {
+  if (mode && M().reloadWhenEmpty && store.get(sessionStorage, storageKey('autostart')) === '1') {
     setStatus('resuming', 'wait');
     setTimeout(() => { if (!running && mode) toggle(); }, 4000);
   }
