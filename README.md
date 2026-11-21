@@ -1,11 +1,11 @@
-# instagram-cleaner scripts
+# ig-activity-cleaner
 
-Tampermonkey userscripts to clean up your Instagram activity from the browser:
+A Tampermonkey userscript to clean up your Instagram activity from the browser:
 
 - **Unlike everything** (posts and reels)
 - **Delete all your comments**
 
-Everything runs in your own Instagram session, on the official "Your activity" page. No server, no hidden API, and your password is never requested.
+One script, one menu. Everything runs in your own Instagram session, on the official "Your activity" page. No server, no hidden API, and your password is never requested.
 
 ---
 
@@ -17,32 +17,38 @@ Everything runs in your own Instagram session, on the official "Your activity" p
 - Pause setting saved across page reloads
 - Auto-reloads the page to keep going until the last item
 - Start / Stop button and live counter
+- Likes / Comments tabs to switch between both modes
 - Works with Instagram in English or French
+- Clean floating menu, draggable and collapsible
+- Menu available in English and French (switch anytime, choice is saved)
 - Console logs (`[IG Cleaner]`) to see where things get stuck
 
-## Scripts
+## Script
 
-| File | What it does | Page |
+`instagram-activity-cleaner.user.js` works on both pages:
+
+| Tab | What it does | Page |
 |---|---|---|
-| `instagram-unlike-all.user.js` | Removes all your likes | `instagram.com/your_activity/interactions/likes` |
-| `instagram-delete-comments.user.js` | Deletes all your comments | `instagram.com/your_activity/interactions/comments` |
+| ♥ Likes | Removes all your likes | `instagram.com/your_activity/interactions/likes` |
+| 💬 Comments | Deletes all your comments | `instagram.com/your_activity/interactions/comments` |
+
+The menu only shows up on these two pages.
 
 ## Installation
 
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) extension (Chrome, Brave, Edge, Firefox…).
-2. Open a `.user.js` file in this repo and click **Raw**: Tampermonkey will offer to install it.
+2. Open `instagram-activity-cleaner.user.js` in this repo and click **Raw**: Tampermonkey will offer to install it.
    Or: Tampermonkey → **Create a new script** → paste the code → **Save**.
-3. Repeat for the second script if you need it.
 
 > On Chrome and Brave, you may need to turn on **Developer mode** in `chrome://extensions` for userscripts to run.
 
 ## Usage
 
 1. Log in to Instagram on desktop.
-2. Open the page that matches the script (see the table above).
-3. A black panel appears in the bottom-right corner.
-4. Set the pause if you want (in seconds), then click **Démarrer** (Start).
-5. Keep the tab open. Click **Arrêter** (Stop) at any time.
+2. Open one of the two pages above.
+3. A menu appears in the bottom-right corner. Use the **Likes** / **Comments** tabs to switch.
+4. Set the pause if you want (in seconds), then click **Start**.
+5. Keep the tab open. Click **Stop** at any time.
 
 ## Tips
 
@@ -67,3 +73,7 @@ This project is not affiliated with Instagram or Meta. It automates clicks on yo
 ## License
 
 [MIT](LICENSE)
+
+---
+
+Made with ❤ by Timothée Meuwly
