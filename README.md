@@ -1,4 +1,4 @@
-# ig-activity-cleaner
+# instagram-unlike-script
 
 Tampermonkey userscripts to clean up your Instagram activity from the browser:
 
